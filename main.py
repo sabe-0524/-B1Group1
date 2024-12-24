@@ -680,6 +680,22 @@ def update_colors():
         else:
             particles_color[i] = 0xFFFFFF
 
+#分散計算カーネル
+@ti.kernel
+def update_dif():
+    num_water = 0
+    num_alcho = 0
+    #全体の粒子割合を計算
+    for i in range(N_particles):
+        if particles_type[i] == type_fluid:
+            num_water += 1
+        elif particles_type[i] == type_fluid:
+            num_alcho +- 1
+    
+    #コップ内を複数の正方形で分割
+
+
+
 
 # 初期化する
 initialize()
