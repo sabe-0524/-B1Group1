@@ -19,7 +19,7 @@ fluid_viscosity = 0.001 # 粘性係数[Pa*s]
 fluid_sound = 10.0 # (仮想的な)音速[m/s]
 
 # 定数
-psize = 0.0125 # 初期粒子間距離[m]
+psize = 0.025 # 初期粒子間距離[m]
 re = psize*2.5 # 影響半径
 pnd0 = ti.field(ti.f32,shape=())
 lambda0 = ti.field(ti.f32,shape=())
@@ -145,11 +145,11 @@ rigids_rmatrix = ti.Matrix.field(2, 2, ti.f32, shape=(N_rigids))  # 回転行列
 array_type = [] # 粒子タイプを格納する一時変数
 array_pos = [] # 粒子位置を格納する一時変数
 array_rigid_id = [] # 剛体番号を格納する一時変数
-# fluid_pset = create_rectangle(0.0,0.0,0.8,0.8)
-# for i in range(len(fluid_pset)):
-#     array_type.append(type_fluid)
-#     array_pos.append(fluid_pset[i])
-#     array_rigid_id.append(-1)
+fluid_pset = create_rectangle(0.0,0.0,0.8,0.8)
+for i in range(len(fluid_pset)):
+    array_type.append(type_fluid)
+    array_pos.append(fluid_pset[i])
+    array_rigid_id.append(-1)
     
 wall_pset = create_rectangle_wall(0.0, 0.0, 1.6, 1.6)
 
@@ -223,7 +223,7 @@ injectors_pos.from_numpy(array_pos)
 injectors_vel.from_numpy(array_vel)
 
 # 安定条件
-dt_max = 0.00125 # dtの上限値
+dt_max = 0.0025 # dtの上限値
 courant_max = 0.1 # 最大クーラン数
 diffusion_max = 0.1 # 最大拡散数
 
