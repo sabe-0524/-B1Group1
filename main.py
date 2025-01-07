@@ -232,7 +232,9 @@ table_data = ti.field(ti.i32,shape=(Nx_buckets,Ny_buckets,cnt_max))
 # マウス変数
 mouse_pos = ti.Vector.field(2,ti.f32,shape=())
 mouse_state = ti.field(ti.i32,shape=()) # 0:押されていない, 1:左クリック
-mouse_radius = 0.2
+mouse_radius = 0.05
+
+stick_pos = ti.Vector.field(2,ti.f32,shape=())
 
 # 流体の流入口
 array_pos = []
@@ -450,30 +452,33 @@ def update():
             k = particles_rigid_id[i]
             particles_force[i] += rigids_density[k] * gravity
         if inject_rigid_id[None] == 1:
-            pos_ij = mouse_pos[None] - particles_pos[i]
-            dist_ij = pos_ij.norm()
+            for ball in range(10):
+                stick_pos[None].y = mouse_pos[None].y - ball * mouse_radius
+                stick_pos[None].x = mouse_pos[None].x
+                pos_ij = stick_pos[None] - particles_pos[i]
+                dist_ij = pos_ij.norm()
 
-            if dist_ij < mouse_radius + psize * 0.5:
-                normal_ij = pos_ij / dist_ij  # 単位法線ベクトル
+                if dist_ij < mouse_radius + psize * 0.5:
+                    normal_ij = pos_ij / dist_ij  # 単位法線ベクトル
 
-                if particles_type[i] == type_fluid:
-                    tmp1 = normal_ij.dot(-particles_vel[i])  # 法線方向の相対速度
-                    if tmp1 < 0.0:
-                        particles_force[i] += normal_ij * (fluid_density[k] * tmp1 / dt_max)
-                    
-                    tmp2 = mouse_radius + psize * 0.5 - dist_ij  # 重なりの長さ
-                    if tmp2 > 0.0:
-                        particles_force[i] -= normal_ij * (fluid_density[k] * tmp2 * 0.1 / dt_max**2)
+                    if particles_type[i] == type_fluid:
+                        tmp1 = normal_ij.dot(-particles_vel[i])  # 法線方向の相対速度
+                        if tmp1 < 0.0:
+                            particles_force[i] += normal_ij * (fluid_density[k] * tmp1 / dt_max)
+                        
+                        tmp2 = mouse_radius + psize * 0.5 - dist_ij  # 重なりの長さ
+                        if tmp2 > 0.0:
+                            particles_force[i] -= normal_ij * (fluid_density[k] * tmp2 * 0.1 / dt_max**2)
 
-                elif particles_type[i] == type_rigid:
-                    k = particles_rigid_id[i]
-                    tmp1 = normal_ij.dot(-particles_vel[i])  # 法線方向の相対速度
-                    if tmp1 < 0.0:
-                        particles_force[i] += normal_ij * (rigids_density[k] * 10 * tmp1 / dt_max)
-                    
-                    tmp2 = mouse_radius + psize * 0.5 - dist_ij  # 重なりの長さ
-                    if tmp2 > 0.0:
-                        particles_force[i] -= normal_ij * (rigids_density[k] * tmp2 / dt_max**2)
+                    elif particles_type[i] == type_rigid:
+                        k = particles_rigid_id[i]
+                        tmp1 = normal_ij.dot(-particles_vel[i])  # 法線方向の相対速度
+                        if tmp1 < 0.0:
+                            particles_force[i] += normal_ij * (rigids_density[k] * 10 * tmp1 / dt_max)
+                        
+                        tmp2 = mouse_radius + psize * 0.5 - dist_ij  # 重なりの長さ
+                        if tmp2 > 0.0:
+                            particles_force[i] -= normal_ij * (rigids_density[k] * tmp2 / dt_max**2)
 
     # 剛体に作用する力の和と力のモーメントの和の計算
     rigids_force.fill(0.0)
