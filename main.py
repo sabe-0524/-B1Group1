@@ -853,7 +853,8 @@ while gui.running:
             inject_fluid_id[None] = 1  # アルコールを選択
             inject_rigid_id[None] = 0  # 剛体0を選択
             print("Injecting Alcohol")
-        elif e.key == 's':
+        elif e.key.lower() == 's':
+            inject_fluid_id[None] = 2  # unknownを選択
             inject_rigid_id[None] = 1  # 剛体0を選択
             print("Injecting Rigid 1")
 
@@ -893,7 +894,7 @@ while gui.running:
         current_fluid = "Water"
     elif inject_fluid_id[None] == 1:
         current_fluid = "Alcohol"
-    else:
+    elif inject_fluid_id[None] == 2:
         current_fluid = "Unknown"
     
     gui.text(f'Step: {step[None]}, Time: {time[None]:.6f}, substeps = {substeps[None]}', (0.0, 1.0), font_size=20, color=0xFFFFFF)
