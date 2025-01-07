@@ -323,9 +323,13 @@ def compute_entropy():
 @ti.kernel
 def compute_total_entropy():
     total_entropy[None] = 0.0
+    total = 0
     for i in range(N_particles):
         if particles_type[i] == type_fluid:
             total_entropy[None] += particles_entropy[i]
+            total +=1
+    total_entropy[None] /= total
+    total_entropy[None] /= ti.log(2)
 
 
 # バケットデータ更新関数
