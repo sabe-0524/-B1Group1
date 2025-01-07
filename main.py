@@ -14,7 +14,9 @@ domain[1] = (1.0,1.0) # (x_max,y_max)
 gravity = ti.Vector([0.0,-9.8]) # 重力加速度[m/s^2]
 
 # 流体の物性値
-fluid_density = 1000.0 # 密度[kg/m^3]
+fluid_density = ti.field(ti.f32, shape=(2))  # 密度[kg/m^3]
+fluid_density[0] = 1000 # 水
+fluid_density[1] = 789 # アルコール
 fluid_viscosity = 0.001 # 粘性係数[Pa*s]
 fluid_sound = 10.0 # (仮想的な)音速[m/s]
 
@@ -145,11 +147,21 @@ rigids_rmatrix = ti.Matrix.field(2, 2, ti.f32, shape=(N_rigids))  # 回転行列
 array_type = [] # 粒子タイプを格納する一時変数
 array_pos = [] # 粒子位置を格納する一時変数
 array_rigid_id = [] # 剛体番号を格納する一時変数
-fluid_pset = create_rectangle(0.0,0.0,0.8,0.8)
-for i in range(len(fluid_pset)):
+array_fluid_id = []
+
+water_pset = create_rectangle(100.0,0.0,0.8,0.8) # 水
+for i in range(len(water_pset)):
     array_type.append(type_fluid)
-    array_pos.append(fluid_pset[i])
+    array_pos.append(water_pset[i])
     array_rigid_id.append(-1)
+    array_fluid_id.append(0)
+
+alcohol_pset = create_rectangle(-100.0,0.0,0.8,0.8) # アルコール
+for i in range(len(alcohol_pset)):
+    array_type.append(type_fluid)
+    array_pos.append(alcohol_pset[i])
+    array_rigid_id.append(-1)
+    array_fluid_id.append(1)
     
 wall_pset = create_rectangle_wall(0.0, 0.0, 1.6, 1.6)
 
@@ -157,12 +169,15 @@ for i in range(len(wall_pset)):
     array_type.append(type_wall)
     array_pos.append(wall_pset[i])
     array_rigid_id.append(-1)
+    array_fluid_id.append(-1)
+
     
-for k, pset in enumerate(rigids_pset):
-    for i in range(len(pset)):
-        array_type.append(type_rigid)
-        array_pos.append(pset[i])
-        array_rigid_id.append(k)
+# for k, pset in enumerate(rigids_pset):
+#     for i in range(len(pset)):
+#         array_type.append(type_rigid)
+#         array_pos.append(pset[i])
+#         array_rigid_id.append(k)
+#         array_fluid_id.append(-1)
 
     
 N_space = 10000 # 流入粒子用の空きスロット数
@@ -170,19 +185,23 @@ for i in range(N_space):
     array_type.append(type_ghost)
     array_pos.append([0.0,0.0])
     array_rigid_id.append(-1)
+    array_fluid_id.append(-1)
 
 array_type = numpy.array(array_type,dtype=numpy.int32)
 array_pos = numpy.array(array_pos,dtype=numpy.float32)
 array_rigid_id = numpy.array(array_rigid_id,dtype=numpy.int32)
+array_fluid_id = numpy.array(array_fluid_id,dtype=numpy.int32)
 N_particles = len(array_pos) # 粒子数
 
 # 初期粒子データ
 particles_type_ini = ti.field(ti.i32,shape=(N_particles)) # 初期粒子タイプ
 particles_pos_ini = ti.Vector.field(2,ti.f32,shape=(N_particles)) # 初期の位置ベクトル
 particles_rigid_id = ti.field(ti.i32,shape=(N_particles)) # 粒子が属する剛体の番号
+particles_fluid_id = ti.field(ti.i32,shape=(N_particles)) # 粒子が属する液体の番号
 particles_type_ini.from_numpy(array_type)
 particles_pos_ini.from_numpy(array_pos)
 particles_rigid_id.from_numpy(array_rigid_id)
+particles_fluid_id.from_numpy(array_fluid_id)
 
 # 変数
 particles_type = ti.field(ti.i32,shape=(N_particles)) # 粒子タイプ
@@ -192,6 +211,13 @@ particles_force = ti.Vector.field(2,ti.f32,shape=(N_particles)) # 単位体積�
 particles_pnd = ti.field(ti.f32,shape=(N_particles)) # 粒子数密度
 particles_pres = ti.field(ti.f32,shape=(N_particles)) # 圧力[Pa]
 particles_color = ti.field(ti.i32,shape=(N_particles)) # 描画する色
+particles_dispersion = ti.field(ti.i32,shape=(N_particles))#粒子密度の分散
+particles_entropy = ti.field(ti.f32, shape=(N_particles))#エントロピー
+total_entropy = ti.field(ti.f32, shape=())
+
+# 流入する流体の種類を保持するフィールド
+inject_fluid_id = ti.field(ti.i32, shape=())
+inject_fluid_id[None] = 0  # 初期値: 水
 
 # バケットデータ
 Nx_buckets = int((domain[1]-domain[0]).x/re)+1
@@ -249,6 +275,54 @@ def weight_gradP(r) -> ti.f32:
     if r < re:
         result = (1-r/re)**2
     return result
+
+# エントロピー計算カーネル
+@ti.kernel
+def compute_entropy():
+    for i in range(N_particles):
+        if particles_type[i] != type_fluid:
+            particles_entropy[i] = 0.0
+            continue
+        
+        count0 = 0
+        count1 = 0
+        # 粒子の近傍を探索
+        bx0 = int((particles_pos[i] - domain[0]).x / re)
+        by0 = int((particles_pos[i] - domain[0]).y / re)
+        
+        for bx, by in ti.ndrange((bx0 - 1, bx0 + 2), (by0 - 1, by0 + 2)):
+            if bx < 0 or bx >= Nx_buckets or by < 0 or by >= Ny_buckets:
+                continue
+            for l in range(table_cnt[bx, by]):
+                j = table_data[bx, by, l]
+                if particles_type[j] != type_fluid:
+                    continue
+                if particles_fluid_id[j] == 0:
+                    count0 += 1
+                elif particles_fluid_id[j] == 1:
+                    count1 += 1
+        
+        total = count0 + count1
+        entropy = 0.0  # 初期化
+        
+        if total > 0:
+            p0 = count0 / total
+            p1 = count1 / total
+            if p0 > 0:
+                entropy -= p0 * ti.log(p0)
+            if p1 > 0:
+                entropy -= p1 * ti.log(p1)
+        
+        particles_entropy[i] = entropy
+
+# エントロピーの合計を計算するカーネル
+@ti.kernel
+def compute_total_entropy():
+    total_entropy[None] = 0.0
+    for i in range(N_particles):
+        if particles_type[i] == type_fluid:
+            total_entropy[None] += particles_entropy[i]
+
 
 # バケットデータ更新関数
 @ti.func
@@ -347,7 +421,7 @@ def preupdate():
     if acc_max > 0.0:
         dt[None] = min(dt[None], ti.math.sqrt(courant_max * psize / acc_max))
     if fluid_viscosity > 0.0:
-        dt[None] = min(dt[None], diffusion_max * psize**2 * fluid_density / fluid_viscosity)
+        dt[None] = min(dt[None], diffusion_max * psize**2 * fluid_density[0] / fluid_viscosity)
 
     substeps[None] = ti.math.ceil(dt_max / dt[None], dtype=ti.i32)
     if substeps[None] > substeps_max:
@@ -366,7 +440,8 @@ def update():
             continue
         # 重力
         if particles_type[i] == type_fluid:
-            particles_force[i] += fluid_density * gravity
+            k = particles_fluid_id[i]
+            particles_force[i] += fluid_density[k] * gravity
 
         elif particles_type[i] == type_rigid:
             k = particles_rigid_id[i]
@@ -402,7 +477,8 @@ def update():
     # 粒子の仮速度と仮位置
     for i in range(N_particles):
         if particles_type[i] == type_fluid:
-            particles_vel[i] += (particles_force[i] / fluid_density) * dt[None]
+            k = particles_fluid_id[i]
+            particles_vel[i] += (particles_force[i] / fluid_density[k]) * dt[None]
             particles_pos[i] += particles_vel[i] * dt[None]
 
         elif particles_type[i] == type_rigid:
@@ -459,6 +535,7 @@ def update():
                 particles_type[j_ghost] = type_fluid
                 particles_vel[j_ghost] = injectors_vel[i]
                 particles_pos[j_ghost] = pos_i
+                particles_fluid_id[j_ghost] = inject_fluid_id[None]
 
     # 粒子数密度と圧力
     for i in range(N_particles):
@@ -490,7 +567,7 @@ def update():
         # 圧力
         if particles_pnd[i] > pnd0[None]:
             particles_pres[i] = (
-                fluid_density * fluid_sound**2 * (particles_pnd[i] - pnd0[None]) / pnd0[None]
+                fluid_density[0] * fluid_sound**2 * (particles_pnd[i] - pnd0[None]) / pnd0[None]
             )
         else:
             particles_pres[i] = 0.0
@@ -536,26 +613,30 @@ def update():
 
                         if tmp < 0.0:
                             if (particles_type[i], particles_type[j]) == (type_fluid, type_fluid):
-                                m_ij = fluid_density * 0.5
+                                m_ij = (
+                                    fluid_density[particles_fluid_id[i]]
+                                    * fluid_density[particles_fluid_id[j]]
+                                    / (fluid_density[particles_fluid_id[i]] + fluid_density[particles_fluid_id[j]])
+                                )
                                 particles_force[i] += normal_ij * (1.0 + collision_coef) * m_ij * tmp / dt_max
 
                             elif (particles_type[i], particles_type[j]) == (type_fluid, type_wall):
-                                m_ij = fluid_density
+                                m_ij = fluid_density[particles_fluid_id[i]]
                                 particles_force[i] += normal_ij * (1.0 + collision_coef) * m_ij * tmp / dt_max
 
                             elif (particles_type[i], particles_type[j]) == (type_fluid, type_rigid):
                                 m_ij = (
-                                    fluid_density
+                                    fluid_density[particles_fluid_id[i]]
                                     * rigids_density[particles_rigid_id[j]]
-                                    / (fluid_density + rigids_density[particles_rigid_id[j]])
+                                    / (fluid_density[particles_fluid_id[i]] + rigids_density[particles_rigid_id[j]])
                                 )
                                 particles_force[i] += normal_ij * (1.0 + collision_coef) * m_ij * tmp / dt_max
 
                             elif (particles_type[i], particles_type[j]) == (type_rigid, type_fluid):
                                 m_ij = (
-                                    fluid_density
+                                    fluid_density[particles_fluid_id[j]]
                                     * rigids_density[particles_rigid_id[i]]
-                                    / (fluid_density + rigids_density[particles_rigid_id[i]])
+                                    / (fluid_density[particles_fluid_id[j]] + rigids_density[particles_rigid_id[i]])
                                 )
                                 particles_force[i] += normal_ij * (1.0 + collision_coef) * m_ij * tmp / dt_max
 
@@ -637,8 +718,9 @@ def update():
     # 粒子の速度と位置の修正
     for i in range(N_particles):
         if particles_type[i] == type_fluid:
-            particles_vel[i] += (particles_force[i] / fluid_density) * dt[None]
-            particles_pos[i] += (particles_force[i] / fluid_density) * dt[None]**2
+            k = particles_fluid_id[i]
+            particles_vel[i] += (particles_force[i] / fluid_density[k]) * dt[None]
+            particles_pos[i] += (particles_force[i] / fluid_density[k]) * dt[None]**2
 
         elif particles_type[i] == type_rigid:
             k = particles_rigid_id[i]
@@ -663,37 +745,36 @@ def update():
         step[None] += 1
         time[None] += dt[None]
 
-# 色計算カーネル
+
+# 色更新カーネル
 @ti.kernel
 def update_colors():
     for i in range(N_particles):
         if particles_type[i] == type_fluid:
-            a = ti.math.clamp(particles_vel[i].norm(),0.0,1.0)
-            r = a
-            b = 1.0-a
-            g = 0.0
-            particles_color[i] = 0x010000*ti.i32(r*255)+0x000100*ti.i32(g*255)+0x000001*ti.i32(b*255)
-        elif particles_type[i] == type_rigid:
-            particles_color[i] = 0xFFFF00
+            if particles_fluid_id[i] == 0:
+                entropy = particles_entropy[i]
+                # 最大エントロピーは ln(2)（2種類の流体の場合）
+                normalized_entropy = entropy / ti.log(2.0)
+                normalized_entropy = ti.min(ti.max(normalized_entropy, 0.0), 1.0)
+                r = ti.cast(normalized_entropy * 255, ti.i32)
+                g = 0
+                b = 255
+                particles_color[i] = (r << 16) + (g << 8) + b
+            else:
+                entropy = particles_entropy[i]
+                # 最大エントロピーは ln(2)（2種類の流体の場合）
+                normalized_entropy = entropy / ti.log(2.0)
+                normalized_entropy = ti.min(ti.max(normalized_entropy, 0.0), 1.0)
+                r = ti.cast(normalized_entropy * 255, ti.i32)
+                g = 255
+                b = 0
+                particles_color[i] = (r << 16) + (g << 8) + b
         elif particles_type[i] == type_wall:
-            particles_color[i] = 0x808080
-        else:
-            particles_color[i] = 0xFFFFFF
-
-#分散計算カーネル
-@ti.kernel
-def update_dif():
-    num_water = 0
-    num_alcho = 0
-    #全体の粒子割合を計算
-    for i in range(N_particles):
-        if particles_type[i] == type_fluid:
-            num_water += 1
-        elif particles_type[i] == type_fluid:
-            num_alcho +- 1
-    
-    #コップ内を複数の正方形で分割
-
+            particles_color[i] = 0x808080  # 灰色
+        elif particles_type[i] == type_rigid:
+            particles_color[i] = 0xFF0000  # 赤色
+        elif particles_type[i] == type_ghost:
+            particles_color[i] = 0x000000  # 黒色
 
 
 
@@ -712,39 +793,70 @@ gui = ti.GUI(window_title,window_size)
 slider_forwards = gui.slider('fast-forward',1,20)
 slider_forwards.value = 10
 
+##描画
 while gui.running:
     # マウスの情報を取得する
-    cursor_x,cursor_y = gui.get_cursor_pos()
-    mouse_pos[None][0] = domain[0].x+(domain[1]-domain[0]).x*cursor_x
-    mouse_pos[None][1] = domain[0].y+(domain[1]-domain[0]).y*cursor_y
+    cursor_x, cursor_y = gui.get_cursor_pos()
+    mouse_pos[None][0] = domain[0].x + (domain[1] - domain[0]).x * cursor_x
+    mouse_pos[None][1] = domain[0].y + (domain[1] - domain[0]).y * cursor_y
     mouse_state[None] = 0
     if gui.is_pressed(ti.GUI.LMB):
         mouse_state[None] = 1
-    forwards = (int)(slider_forwards.value)
+    forwards = int(slider_forwards.value)
     slider_forwards.value = forwards
+    
+    # キーイベントの処理
+    for e in gui.get_events(gui.PRESS):
+        if e.key == ti.GUI.ESCAPE:
+            initialize()
+        elif e.key.lower() == 'w':
+            inject_fluid_id[None] = 0  # 水を選択
+            print("Injecting Water")
+        elif e.key.lower() == 'a':
+            inject_fluid_id[None] = 1  # アルコールを選択
+            print("Injecting Alcohol")
+
+
     # 時間を進める
     for frame in range(forwards):
         preupdate()
         for substep in range(substeps[None]):
             update()
+        compute_entropy()           # エントロピー計算を追加
+        compute_total_entropy()     # エントロピーの合計を計算
+        update_colors()             # 色更新を追加
+
+
     # キーボード入力の受け取り処理
     for e in gui.get_events(gui.PRESS):
         # ESCキーが押されたら初期化する
         if e.key == ti.GUI.ESCAPE:
             initialize()
     # 現在の状態を描画する
-    update_colors()
+   
     if mouse_state[None] == 1:
         J = injectors_pos.to_numpy()
-        J[:,0] = (J[:,0]+mouse_pos[None].x-domain[0].x)/(domain[1]-domain[0]).x
-        J[:,1] = (J[:,1]+mouse_pos[None].y-domain[0].y)/(domain[1]-domain[0]).y
-        gui.circles(J,radius=psize*0.5*scale_to_pixel,color=0x00FF00)
+        J[:, 0] = (J[:, 0] + mouse_pos[None].x - domain[0].x) / (domain[1] - domain[0]).x
+        J[:, 1] = (J[:, 1] + mouse_pos[None].y - domain[0].y) / (domain[1] - domain[0]).y
+        gui.circles(J, radius=psize * 0.5 * scale_to_pixel, color=0x00FF00)
     X = particles_pos.to_numpy()
-    X[:,0] = (X[:,0]-domain[0].x)/(domain[1]-domain[0]).x
-    X[:,1] = (X[:,1]-domain[0].y)/(domain[1]-domain[0]).y
+    X[:, 0] = (X[:, 0] - domain[0].x) / (domain[1] - domain[0]).x
+    X[:, 1] = (X[:, 1] - domain[0].y) / (domain[1] - domain[0]).y
     T = particles_type.to_numpy()
     C = particles_color.to_numpy()
-    gui.circles(X[(T!=type_ghost),:],radius=psize*0.5*scale_to_pixel,color=C[(T!=type_ghost)])
-    gui.text(f'Step: {step[None]}, Time: {time[None]:.6f}, substeps = {substeps[None]}',(0.0,1.0),font_size=20,color=0xFFFFFF)
-    gui.text(f'Particles: {numpy.count_nonzero(T==type_fluid)} / {numpy.count_nonzero(T==type_wall)} / {numpy.count_nonzero(T==type_ghost)}',(0.0,0.975),font_size=20,color=0xFFFFFF)
+    gui.circles(X[(T != type_ghost), :], radius=psize * 0.5 * scale_to_pixel, color=C[(T != type_ghost)])
+    
+    # 現在選択されている流体の種類を表示
+    if inject_fluid_id[None] == 0:
+        current_fluid = "Water"
+    elif inject_fluid_id[None] == 1:
+        current_fluid = "Alcohol"
+    else:
+        current_fluid = "Unknown"
+    
+    gui.text(f'Step: {step[None]}, Time: {time[None]:.6f}, substeps = {substeps[None]}', (0.0, 1.0), font_size=20, color=0xFFFFFF)
+    gui.text(f'Particles: {numpy.count_nonzero(T == type_fluid)} / {numpy.count_nonzero(T == type_wall)} / {numpy.count_nonzero(T == type_ghost)}', (0.0, 0.975), font_size=20, color=0xFFFFFF)
+    gui.text(f'Entropy: {total_entropy[None]:.6f}', (0.0, 0.95), font_size=20, color=0xFFFFFF)
+    gui.text(f'Current Inject Fluid: {current_fluid}', (0.0, 0.925), font_size=20, color=0xFFFFFF)  # 現在の流体の表示
+    
     gui.show()
