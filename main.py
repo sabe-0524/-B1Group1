@@ -217,7 +217,9 @@ total_entropy = ti.field(ti.f32, shape=())
 
 # 流入する流体の種類を保持するフィールド
 inject_fluid_id = ti.field(ti.i32, shape=())
+inject_rigid_id = ti.field(ti.i32, shape=())
 inject_fluid_id[None] = 0  # 初期値: 水
+inject_rigid_id[None] = 0  # 初期値: 0番目の剛体
 
 # バケットデータ
 Nx_buckets = int((domain[1]-domain[0]).x/re)+1
@@ -494,48 +496,51 @@ def update():
 
     # 流入
     if mouse_state[None] == 1:
-        for i in range(N_injectors):
-            # 流入口に近接する粒子を探す
-            j_min = -1
-            dist_sqr_min = re**2
-            pos_i = mouse_pos[None] + injectors_pos[i]
-            bx0 = int((pos_i - domain[0]).x / re)
-            by0 = int((pos_i - domain[0]).y / re)
+        if inject_rigid_id[None] == 0:
+            for i in range(N_injectors):
+                # 流入口に近接する粒子を探す
+                j_min = -1
+                dist_sqr_min = re**2
+                pos_i = mouse_pos[None] + injectors_pos[i]
+                bx0 = int((pos_i - domain[0]).x / re)
+                by0 = int((pos_i - domain[0]).y / re)
 
-            for bx, by in ti.ndrange((bx0 - 1, bx0 + 2), (by0 - 1, by0 + 2)):
-                if bx < 0 or bx >= Nx_buckets or by < 0 or by >= Ny_buckets:
+                for bx, by in ti.ndrange((bx0 - 1, bx0 + 2), (by0 - 1, by0 + 2)):
+                    if bx < 0 or bx >= Nx_buckets or by < 0 or by >= Ny_buckets:
+                        continue
+
+                    for l in range(table_cnt[bx, by]):
+                        j = table_data[bx, by, l]
+                        pos_ij = particles_pos[j] - pos_i
+                        dist_sqr_ij = ti.math.dot(pos_ij, pos_ij)
+
+                        if dist_sqr_min > dist_sqr_ij:
+                            dist_sqr_min = dist_sqr_ij
+                            j_min = j
+
+                # 流入口に重なる粒子がある場合は流入せず、その粒子の速度を流入速度に書き換える
+                if dist_sqr_min < (psize * 0.99)**2:
+                    if particles_type[j_min] == type_fluid:
+                        particles_vel[j_min] = injectors_vel[i]
                     continue
 
-                for l in range(table_cnt[bx, by]):
-                    j = table_data[bx, by, l]
-                    pos_ij = particles_pos[j] - pos_i
-                    dist_sqr_ij = ti.math.dot(pos_ij, pos_ij)
+                # 空きスロットを探す
+                j_ghost = -1
+                for j in range(N_particles):
+                    if particles_type[j] == type_ghost:
+                        type_j = ti.atomic_min(particles_type[j], type_fluid)
+                        if type_j == type_ghost:
+                            j_ghost = j
+                            break
 
-                    if dist_sqr_min > dist_sqr_ij:
-                        dist_sqr_min = dist_sqr_ij
-                        j_min = j
-
-            # 流入口に重なる粒子がある場合は流入せず、その粒子の速度を流入速度に書き換える
-            if dist_sqr_min < (psize * 0.99)**2:
-                if particles_type[j_min] == type_fluid:
-                    particles_vel[j_min] = injectors_vel[i]
-                continue
-
-            # 空きスロットを探す
-            j_ghost = -1
-            for j in range(N_particles):
-                if particles_type[j] == type_ghost:
-                    type_j = ti.atomic_min(particles_type[j], type_fluid)
-                    if type_j == type_ghost:
-                        j_ghost = j
-                        break
-
-            # 空きスロットがあれば粒子を発生させる
-            if j_ghost != -1:
-                particles_type[j_ghost] = type_fluid
-                particles_vel[j_ghost] = injectors_vel[i]
-                particles_pos[j_ghost] = pos_i
-                particles_fluid_id[j_ghost] = inject_fluid_id[None]
+                # 空きスロットがあれば粒子を発生させる
+                if j_ghost != -1:
+                    particles_type[j_ghost] = type_fluid
+                    particles_vel[j_ghost] = injectors_vel[i]
+                    particles_pos[j_ghost] = pos_i
+                    particles_fluid_id[j_ghost] = inject_fluid_id[None]
+        else:
+            pass
 
     # 粒子数密度と圧力
     for i in range(N_particles):
@@ -815,6 +820,9 @@ while gui.running:
         elif e.key.lower() == 'a':
             inject_fluid_id[None] = 1  # アルコールを選択
             print("Injecting Alcohol")
+        elif e.key == 's':
+            inject_rigid_id[None] = 1  # 剛体0を選択
+            print("Injecting Rigid 1")
 
 
     # 時間を進める
@@ -835,10 +843,11 @@ while gui.running:
     # 現在の状態を描画する
    
     if mouse_state[None] == 1:
-        J = injectors_pos.to_numpy()
-        J[:, 0] = (J[:, 0] + mouse_pos[None].x - domain[0].x) / (domain[1] - domain[0]).x
-        J[:, 1] = (J[:, 1] + mouse_pos[None].y - domain[0].y) / (domain[1] - domain[0]).y
-        gui.circles(J, radius=psize * 0.5 * scale_to_pixel, color=0x00FF00)
+        if inject_rigid_id[None] == 0:
+            J = injectors_pos.to_numpy()
+            J[:, 0] = (J[:, 0] + mouse_pos[None].x - domain[0].x) / (domain[1] - domain[0]).x
+            J[:, 1] = (J[:, 1] + mouse_pos[None].y - domain[0].y) / (domain[1] - domain[0]).y
+            gui.circles(J, radius=psize * 0.5 * scale_to_pixel, color=0x00FF00)
     X = particles_pos.to_numpy()
     X[:, 0] = (X[:, 0] - domain[0].x) / (domain[1] - domain[0]).x
     X[:, 1] = (X[:, 1] - domain[0].y) / (domain[1] - domain[0]).y
