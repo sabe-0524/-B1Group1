@@ -88,7 +88,7 @@ def calculate_inertia(pset, mass, center):
     return inertia
 
 # 剛体の数
-N_rigids = 3
+N_rigids = 2
 
 # 剛体のパラメータと初期条件
 rigids_pset = [None] * N_rigids  # 剛体形状を表す粒子集合
