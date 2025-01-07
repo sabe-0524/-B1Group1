@@ -149,6 +149,20 @@ array_pos = [] # 粒子位置を格納する一時変数
 array_rigid_id = [] # 剛体番号を格納する一時変数
 array_fluid_id = []
 
+water_pset = create_rectangle(100.0,0.0,0.8,0.8) # 水
+for i in range(len(water_pset)):
+    array_type.append(type_fluid)
+    array_pos.append(water_pset[i])
+    array_rigid_id.append(-1)
+    array_fluid_id.append(0)
+
+alcohol_pset = create_rectangle(-100.0,0.0,0.8,0.8) # アルコール
+for i in range(len(alcohol_pset)):
+    array_type.append(type_fluid)
+    array_pos.append(alcohol_pset[i])
+    array_rigid_id.append(-1)
+    array_fluid_id.append(1)
+
 wall_pset = create_rectangle_wall(0.0, 0.0, 1.6, 1.6)
 for i in range(len(wall_pset)):
     array_type.append(type_wall)
@@ -435,6 +449,7 @@ def update():
         elif particles_type[i] == type_rigid:
             k = particles_rigid_id[i]
             particles_force[i] += rigids_density[k] * gravity
+
         if inject_rigid_id[None] == 1:
             for ball in range(10):
                 stick_pos[None].y = mouse_pos[None].y - ball * mouse_radius
