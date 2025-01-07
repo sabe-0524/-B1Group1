@@ -88,7 +88,7 @@ def calculate_inertia(pset, mass, center):
     return inertia
 
 # 剛体の数
-N_rigids = 2
+N_rigids = 3
 
 # 剛体のパラメータと初期条件
 rigids_pset = [None] * N_rigids  # 剛体形状を表す粒子集合
@@ -103,9 +103,9 @@ rigids_rcenter = ti.Vector.field(2, ti.f32, shape=(N_rigids))  # 回転中心
 rigids_inertia = ti.field(ti.f32, shape=(N_rigids))  # 慣性モーメント
 
 for k in range(N_rigids):
-    rigids_pset[k] = create_rectangle(-0.25 + 0.5 * k, 0.0, 0.2, 0.8)
+    rigids_pset[k] = create_rectangle(0, -0.2 + 0.4 * k, 0.3, 0.3)
 
-    rigids_density[k] = 500.0
+    rigids_density[k] = 900
 
     rigids_mass[k] = rigids_density[k] * psize**2 * len(rigids_pset[k])
 
@@ -149,35 +149,19 @@ array_pos = [] # 粒子位置を格納する一時変数
 array_rigid_id = [] # 剛体番号を格納する一時変数
 array_fluid_id = []
 
-water_pset = create_rectangle(100.0,0.0,0.8,0.8) # 水
-for i in range(len(water_pset)):
-    array_type.append(type_fluid)
-    array_pos.append(water_pset[i])
-    array_rigid_id.append(-1)
-    array_fluid_id.append(0)
-
-alcohol_pset = create_rectangle(-100.0,0.0,0.8,0.8) # アルコール
-for i in range(len(alcohol_pset)):
-    array_type.append(type_fluid)
-    array_pos.append(alcohol_pset[i])
-    array_rigid_id.append(-1)
-    array_fluid_id.append(1)
-    
 wall_pset = create_rectangle_wall(0.0, 0.0, 1.6, 1.6)
-
 for i in range(len(wall_pset)):
     array_type.append(type_wall)
     array_pos.append(wall_pset[i])
     array_rigid_id.append(-1)
     array_fluid_id.append(-1)
 
-    
-# for k, pset in enumerate(rigids_pset):
-#     for i in range(len(pset)):
-#         array_type.append(type_rigid)
-#         array_pos.append(pset[i])
-#         array_rigid_id.append(k)
-#         array_fluid_id.append(-1)
+for k, pset in enumerate(rigids_pset): # 氷
+    for i in range(len(pset)):
+        array_type.append(type_rigid)
+        array_pos.append(pset[i])
+        array_rigid_id.append(k)
+        array_fluid_id.append(-1)
 
     
 N_space = 10000 # 流入粒子用の空きスロット数
