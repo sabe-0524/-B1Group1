@@ -233,6 +233,7 @@ mouse_state = ti.field(ti.i32,shape=()) # 0:押されていない, 1:左クリ�
 mouse_radius = 0.05
 
 stick_pos = ti.Vector.field(2,ti.f32,shape=())
+sticks_pos = ti.Vector.field(2,ti.f32,shape=(10))
 
 # 流体の流入口
 array_pos = []
@@ -450,7 +451,7 @@ def update():
             k = particles_rigid_id[i]
             particles_force[i] += rigids_density[k] * gravity
 
-        if inject_rigid_id[None] == 1:
+        if inject_rigid_id[None] == 1 and mouse_state[None] == 1:
             for ball in range(10):
                 stick_pos[None].y = mouse_pos[None].y - ball * mouse_radius
                 stick_pos[None].x = mouse_pos[None].x
@@ -882,6 +883,16 @@ while gui.running:
             J[:, 0] = (J[:, 0] + mouse_pos[None].x - domain[0].x) / (domain[1] - domain[0]).x
             J[:, 1] = (J[:, 1] + mouse_pos[None].y - domain[0].y) / (domain[1] - domain[0]).y
             gui.circles(J, radius=psize * 0.5 * scale_to_pixel, color=0x00FF00)
+        else:
+            I = numpy.array([[mouse_pos[None].x, mouse_pos[None].y]])
+            for i in range(9):
+                # 現在の座標に (mouse_radius * (i+1)) を加算して新しい座標を生成
+                new_pos = mouse_pos[None] - numpy.array([0, mouse_radius * (i + 1)])
+                # 配列に新しい座標を追加
+                I = numpy.vstack((I, new_pos))
+            I[:, 0] = (I[:, 0] - domain[0].x) / (domain[1] - domain[0]).x
+            I[:, 1] = (I[:, 1] - domain[0].y) / (domain[1] - domain[0]).y
+            gui.circles(I, radius=mouse_radius * scale_to_pixel, color=0x00FF00)
     X = particles_pos.to_numpy()
     X[:, 0] = (X[:, 0] - domain[0].x) / (domain[1] - domain[0]).x
     X[:, 1] = (X[:, 1] - domain[0].y) / (domain[1] - domain[0]).y
