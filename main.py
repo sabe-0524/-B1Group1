@@ -816,9 +816,11 @@ while gui.running:
             initialize()
         elif e.key.lower() == 'w':
             inject_fluid_id[None] = 0  # 水を選択
+            inject_rigid_id[None] = 0  # 剛体0を選択
             print("Injecting Water")
         elif e.key.lower() == 'a':
             inject_fluid_id[None] = 1  # アルコールを選択
+            inject_rigid_id[None] = 0  # 剛体0を選択
             print("Injecting Alcohol")
         elif e.key == 's':
             inject_rigid_id[None] = 1  # 剛体0を選択
